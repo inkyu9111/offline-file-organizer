@@ -13,6 +13,7 @@ from readonly_file_scanner import (
     ScannerConfig,
     _ProgressPrinter,
     _SQLiteStore,
+    _redact_paths,
     classify_extension,
     format_progress,
     human_size,
@@ -105,6 +106,21 @@ class PathValidationTests(unittest.TestCase):
 
 # 공통 보조 함수의 출력값을 점검한다.
 class HelperTests(unittest.TestCase):
+    # 상대경로의 구두점과 파일명이 일반 오류 문장에서 잘못 가려지지 않는지 확인한다.
+    def test_path_redaction_does_not_replace_relative_input_text(self):
+        current = Path.cwd()
+        config = ScannerConfig(roots=(Path("."),), output_db=Path("scan.sqlite3"))
+        message = "foo.py 실패. 버전 1.2이며 scan.sqlite3은 파일명이다."
+
+        redacted = _redact_paths(
+            message,
+            (current,),
+            current / "scan.sqlite3",
+            config,
+        )
+
+        self.assertEqual(redacted, message)
+
     # 업무에서 자주 쓰는 확장자를 올바른 유형으로 분류하는지 확인한다.
     def test_classifies_common_business_extensions(self):
         self.assertEqual(classify_extension(".xlsx"), "spreadsheet")
@@ -575,6 +591,52 @@ class SQLiteScanTests(unittest.TestCase):
         self.assertNotIn(str(self.root_a), row["failure_message"])
         self.assertNotIn(str(self.root_a), row["failure_traceback"])
         self.assertIn("<ROOT-001>", row["failure_message"])
+
+    # 경로 해석 전후의 표기가 달라도 입력 경로를 같은 루트로 가리는지 확인한다.
+    def test_redacts_configured_root_alias_after_path_resolution(self):
+        configured_root = self.base / "RUNNER~1" / ".." / "업무A"
+        configured_output = (
+            self.base / "OUTPUT~1" / ".." / "결과" / "scan.sqlite3"
+        )
+        resolved_root = self.root_a.resolve()
+        resolved_output = self.output.resolve()
+        real_scandir = os.scandir
+
+        # 해석된 실제 폴더를 스캔하되 오류에는 사용자가 입력한 별칭을 포함시킨다.
+        def exploding_scandir(path):
+            if Path(path).name == "보고서":
+                raise RuntimeError(
+                    f"접근 실패: {configured_root}; 결과: {configured_output}"
+                )
+            return real_scandir(path)
+
+        with mock.patch(
+            "readonly_file_scanner.validate_scan_paths",
+            return_value=((resolved_root,), resolved_output),
+        ):
+            with mock.patch(
+                "readonly_file_scanner.os.scandir", side_effect=exploding_scandir
+            ):
+                with self.assertRaises(RuntimeError):
+                    scan_to_database(
+                        ScannerConfig(
+                            roots=(configured_root,),
+                            output_db=configured_output,
+                            commit_every=1,
+                            progress_interval_seconds=0,
+                        ),
+                        progress_stream=io.StringIO(),
+                    )
+
+        row = self._fetchone(
+            "SELECT failure_message, failure_traceback FROM scan_run WHERE run_id = 1"
+        )
+        self.assertNotIn(str(configured_root), row["failure_message"])
+        self.assertNotIn(str(configured_root), row["failure_traceback"])
+        self.assertNotIn(str(configured_output), row["failure_message"])
+        self.assertNotIn(str(configured_output), row["failure_traceback"])
+        self.assertIn("<ROOT-001>", row["failure_message"])
+        self.assertIn("<OUTPUT_DB>", row["failure_message"])
 
     # 폴더의 직접 및 하위 파일 수와 용량이 올바르게 집계되는지 확인한다.
     def test_materializes_recursive_folder_rollups(self):

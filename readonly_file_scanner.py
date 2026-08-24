@@ -1659,23 +1659,47 @@ class _ProgressController:
 
 
 # 오류 메시지와 추적 정보에서 로컬 절대경로를 가린다.
-def _redact_paths(text: str, roots: Sequence[Path], output_db: Path) -> str:
+def _redact_paths(
+    text: str,
+    roots: Sequence[Path],
+    output_db: Path,
+    config: ScannerConfig | None = None,
+) -> str:
     result = text
     replacements: list[tuple[str, str]] = []
+    configured_roots = config.roots if config is not None else ()
     for index, root in enumerate(roots, start=1):
         token = f"<ROOT-{index:03d}>"
-        raw = str(root)
+        aliases = [root]
+        if index <= len(configured_roots):
+            configured_root = configured_roots[index - 1].expanduser()
+            if configured_root.is_absolute():
+                aliases.append(configured_root)
+            aliases.append(Path(os.path.abspath(configured_root)))
+        for alias in aliases:
+            raw = str(alias)
+            replacements.extend(
+                (
+                    (raw, token),
+                    (raw.replace("\\", "/"), token),
+                    (raw.replace("/", "\\"), token),
+                )
+            )
+    output_aliases = [output_db]
+    if config is not None:
+        configured_output = config.output_db.expanduser()
+        if configured_output.is_absolute():
+            output_aliases.append(configured_output)
+        output_aliases.append(Path(os.path.abspath(configured_output)))
+    for output_alias in output_aliases:
+        output_raw = str(output_alias)
         replacements.extend(
-            ((raw, token), (raw.replace("\\", "/"), token), (raw.replace("/", "\\"), token))
+            (
+                (output_raw, "<OUTPUT_DB>"),
+                (output_raw.replace("\\", "/"), "<OUTPUT_DB>"),
+                (output_raw.replace("/", "\\"), "<OUTPUT_DB>"),
+            )
         )
-    output_raw = str(output_db)
-    replacements.extend(
-        (
-            (output_raw, "<OUTPUT_DB>"),
-            (output_raw.replace("\\", "/"), "<OUTPUT_DB>"),
-            (output_raw.replace("/", "\\"), "<OUTPUT_DB>"),
-        )
-    )
     for raw, token in sorted(replacements, key=lambda item: len(item[0]), reverse=True):
         if raw:
             result = result.replace(raw, token)
@@ -1778,7 +1802,7 @@ def _scan_root(
                     try:
                         stat_result = entry.stat(follow_symlinks=False)
                     except OSError as exc:
-                        safe_message = _redact_paths(str(exc), roots, output_db)
+                        safe_message = _redact_paths(str(exc), roots, output_db, config)
                         store.insert_error(
                             context.root_id,
                             relative,
@@ -1916,7 +1940,7 @@ def _scan_root(
                     direct_size_bytes += stat_result.st_size
                     progress.discovered_file(stat_result.st_size)
         except OSError as exc:
-            safe_message = _redact_paths(str(exc), roots, output_db)
+            safe_message = _redact_paths(str(exc), roots, output_db, config)
             store.insert_error(
                 context.root_id,
                 relative_folder,
@@ -2035,7 +2059,7 @@ def _hash_duplicate_candidates(
         )
         store.update_file_hash(str(row["file_id"]), status, digest)
         if error is not None:
-            safe_message = _redact_paths(str(error), roots, output_db)
+            safe_message = _redact_paths(str(error), roots, output_db, config)
             store.insert_error(
                 root_id,
                 relative_path,
@@ -2195,8 +2219,8 @@ def scan_to_database(
             progress._refresh_elapsed()
             progress.snapshot.current_operation = "사용자 중단"
         if store is not None and progress is not None:
-            trace = _redact_paths(traceback.format_exc(), roots, output_db)
-            safe_message = _redact_paths(str(exc), roots, output_db)
+            trace = _redact_paths(traceback.format_exc(), roots, output_db, config)
+            safe_message = _redact_paths(str(exc), roots, output_db, config)
             try:
                 store.mark_failed(
                     progress.snapshot,
@@ -2214,8 +2238,8 @@ def scan_to_database(
         if progress is not None:
             progress._refresh_elapsed()
         if store is not None and progress is not None:
-            trace = _redact_paths(traceback.format_exc(), roots, output_db)
-            safe_message = _redact_paths(str(exc), roots, output_db)
+            trace = _redact_paths(traceback.format_exc(), roots, output_db, config)
+            safe_message = _redact_paths(str(exc), roots, output_db, config)
             try:
                 store.mark_failed(progress.snapshot, exc, trace, safe_message)
             except sqlite3.Error:
