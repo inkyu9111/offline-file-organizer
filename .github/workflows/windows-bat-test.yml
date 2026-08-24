@@ -1,0 +1,47 @@
+name: Test scanner
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-bat:
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.10"
+
+      - name: Run unit tests
+        run: python -m unittest -v
+
+      - name: Run batch file with a trailing backslash path
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $env:PYTHONUTF8 = "1"
+          $OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+          $root = Join-Path $env:RUNNER_TEMP "업무 자료 & 검토! (원본) ^ 100%"
+          $outputDirectory = Join-Path $env:RUNNER_TEMP "검사 결과"
+          $output = Join-Path $outputDirectory "scan.sqlite3"
+          New-Item -ItemType Directory -Force -Path $root, $outputDirectory | Out-Null
+          Set-Content -LiteralPath (Join-Path $root "보고서.txt") -Value "내용" -Encoding utf8
+
+          $rootWithTrailingSlash = $root + "\"
+          $inputText = "$rootWithTrailingSlash`r`n`r`n$output`r`nn`r`n`r`n"
+          $inputText | & cmd.exe /d /c run_scanner.bat
+          if ($LASTEXITCODE -ne 0) {
+            throw "run_scanner.bat failed with exit code $LASTEXITCODE"
+          }
+
+          python -c "import sqlite3, sys; connection = sqlite3.connect(sys.argv[1]); assert connection.execute('SELECT COUNT(*) FROM files').fetchone()[0] == 1" $output

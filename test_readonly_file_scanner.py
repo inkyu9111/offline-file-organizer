@@ -760,6 +760,55 @@ class CommandLineTests(unittest.TestCase):
 
             self.assertEqual(exit_code, 0)
 
+    # 대화형 입력에서는 역슬래시로 끝나는 경로도 명령행 옵션을 삼키지 않는지 확인한다.
+    def test_interactive_mode_accepts_root_ending_in_backslash(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            root = base / "업무 자료\\"
+            output = base / "scan.sqlite3"
+            root.mkdir()
+            (root / "보고서.txt").write_text("내용", encoding="utf-8")
+
+            answers = iter((str(root), "", str(output), "n"))
+            with mock.patch("builtins.input", side_effect=answers), mock.patch(
+                "sys.stdout", new=io.StringIO()
+            ):
+                exit_code = main(
+                    [
+                        "--interactive",
+                        "--progress-interval",
+                        "0",
+                        "--commit-every",
+                        "1",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            with closing(sqlite3.connect(output)) as connection:
+                self.assertEqual(connection.execute("SELECT COUNT(*) FROM files").fetchone()[0], 1)
+
+    # 대화형 입력 스트림이 끝나면 추적 내용을 노출하지 않고 오류 종료하는지 확인한다.
+    def test_interactive_mode_handles_end_of_input(self):
+        with mock.patch("builtins.input", side_effect=EOFError), mock.patch(
+            "sys.stderr", new=io.StringIO()
+        ) as stderr:
+            exit_code = main(["--interactive"])
+
+        self.assertEqual(exit_code, 2)
+        self.assertIn("입력이 중간에 종료", stderr.getvalue())
+        self.assertNotIn("Traceback", stderr.getvalue())
+
+    # 대화형 입력 중 사용자가 중단하면 기존 중단 종료값을 돌려주는지 확인한다.
+    def test_interactive_mode_handles_keyboard_interrupt(self):
+        with mock.patch("builtins.input", side_effect=KeyboardInterrupt), mock.patch(
+            "sys.stdout", new=io.StringIO()
+        ) as stdout:
+            exit_code = main(["--interactive"])
+
+        self.assertEqual(exit_code, 130)
+        self.assertIn("사용자가 입력을 중단", stdout.getvalue())
+        self.assertNotIn("Traceback", stdout.getvalue())
+
     # 예상하지 못한 실행 오류도 종료값과 오류 문구로 처리하는지 확인한다.
     def test_main_handles_unexpected_exceptions(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -790,6 +839,19 @@ class CommandLineTests(unittest.TestCase):
 
             self.assertEqual(raised.exception.code, 2)
 
+    # 비대화형 실행에서 출력 경로를 생략하면 기존 오류 계약을 유지하는지 확인한다.
+    def test_main_rejects_missing_output(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "업무"
+            root.mkdir()
+
+            with mock.patch("sys.stderr", new=io.StringIO()) as stderr:
+                with self.assertRaises(SystemExit) as raised:
+                    main([str(root)])
+
+            self.assertEqual(raised.exception.code, 2)
+            self.assertIn("--output", stderr.getvalue())
+
 
 # 저장소 문서와 한글 역할 주석이 작성 규칙을 따르는지 확인한다.
 class RepositoryStyleTests(unittest.TestCase):
@@ -811,13 +873,14 @@ class RepositoryStyleTests(unittest.TestCase):
             with self.subTest(required_text=required_text):
                 self.assertIn(required_text, content)
 
-    # 배치파일이 여러 루트와 단일 데이터베이스 출력을 지원하는지 확인한다.
-    def test_batch_file_supports_multiple_roots_and_sqlite_output(self):
+    # 배치파일이 경로를 조립하지 않고 파이썬 대화형 입력에 맡기는지 확인한다.
+    def test_batch_file_delegates_path_input_to_python(self):
         batch = Path(__file__).with_name("run_scanner.bat")
         content = batch.read_text(encoding="utf-8-sig")
-        self.assertIn("--root", content)
-        self.assertIn(".sqlite3", content)
-        self.assertIn("--hash-duplicates", content)
+        self.assertIn("--interactive", content)
+        self.assertIn("-X utf8", content)
+        self.assertNotIn("ROOT_ARGS", content)
+        self.assertNotIn("EnableDelayedExpansion", content)
 
     # 운영 코드가 데이터베이스 결과 전체를 한꺼번에 가져오지 않는지 확인한다.
     def test_production_code_does_not_fetch_all_database_rows(self):

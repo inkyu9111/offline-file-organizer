@@ -60,9 +60,17 @@ py -3 readonly_file_scanner.py "D:\업무자료1" --output "F:\파일정리결�
 
 ## 배치파일로 실행하기
 
-`run_scanner.bat`와 `readonly_file_scanner.py`를 같은 폴더에 둔 뒤 배치파일을 실행합니다. 스캔할 폴더를 한 줄씩 입력하고, 입력이 끝나면 빈 줄에서 Enter를 누릅니다. 배치파일은 내부적으로 `--root` 옵션을 반복해서 전달합니다.
+`run_scanner.bat`와 `readonly_file_scanner.py`를 같은 폴더에 둔 뒤 배치파일을 실행합니다. 스캔할 폴더를 한 줄씩 입력하고, 입력이 끝나면 빈 줄에서 Enter를 누릅니다. 이어서 새로 만들 SQLite 파일의 전체 경로와 중복 파일 해시 확인 여부를 입력합니다.
 
-명령행에서 같은 방식을 직접 사용할 수도 있습니다.
+배치파일은 경로 문자열을 Windows 명령행 인자로 다시 조립하지 않고 Python의 대화형 모드를 실행합니다. 따라서 `D:\` 같은 드라이브 루트, 역슬래시로 끝나는 폴더, 공백이나 셸 특수문자가 들어간 폴더도 `--output` 옵션을 삼키지 않습니다. 입력할 때 경로 양쪽에 큰따옴표는 붙이지 마십시오.
+
+대화형 모드는 명령행에서도 직접 실행할 수 있습니다.
+
+```bat
+py -3 readonly_file_scanner.py --interactive
+```
+
+대화형 입력 없이 옵션으로 모든 경로를 전달하려면 `--root`를 반복해서 사용합니다.
 
 ```bat
 py -3 readonly_file_scanner.py ^
@@ -218,7 +226,8 @@ py -3 readonly_file_scanner.py ^
 | 옵션 | 설명 |
 |---|---|
 | `--output FILE.sqlite3` | 새로 만들 결과 파일. 모든 스캔 폴더 밖에 지정해야 함 |
-| `--root PATH` | 스캔 폴더를 반복해서 추가. 배치파일에서 사용 |
+| `--root PATH` | 비대화형 실행에서 스캔 폴더를 반복해서 추가 |
+| `--interactive` | 스캔 폴더·출력 파일·해시 여부를 차례로 입력 |
 | `--hash-duplicates` | 같은 크기의 후보 파일을 SHA-256으로 확인 |
 | `--max-hash-size-mb N` | 해시할 파일 한 개의 최대 크기. 기본 4096 MiB, `0`은 무제한 |
 | `--old-days N` | 오래된 파일 후보 기준 일수. 기본 730일 |

@@ -2228,6 +2228,26 @@ def scan_to_database(
             store.close()
 
 
+# 배치파일에서 셸 인자 조립 없이 스캔 경로와 출력 경로를 입력받는다.
+def _prompt_for_scan_arguments() -> tuple[list[str], str, bool]:
+    roots: list[str] = []
+    while True:
+        root = input(
+            "스캔할 폴더를 입력하십시오. 입력을 마치려면 빈 줄에서 Enter: "
+        ).strip()
+        if not root:
+            break
+        roots.append(root)
+
+    output = input(
+        "새로 만들 결과 파일 경로를 입력하십시오. 예: F:\\파일정리결과\\scan.sqlite3: "
+    ).strip()
+    hash_choice = input(
+        "같은 크기의 파일을 SHA-256으로 비교하시겠습니까? [y/N]: "
+    ).strip()
+    return roots, output, hash_choice.casefold() in {"y", "yes"}
+
+
 # 명령행 옵션과 도움말을 구성한다.
 def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -2247,13 +2267,20 @@ def build_argument_parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         metavar="PATH",
-        help="스캔 폴더를 반복해서 추가합니다. 배치파일에서 사용합니다.",
+        help="비대화형 실행에서 스캔 폴더를 반복해서 추가합니다.",
+    )
+    parser.add_argument(
+        "--interactive",
+        action="store_true",
+        help="배치파일용 대화형 모드로 스캔 폴더와 출력 경로를 입력받습니다.",
     )
     parser.add_argument(
         "--output",
-        required=True,
         metavar="FILE.sqlite3",
-        help="새로 만들 SQLite 파일 경로입니다. 모든 스캔 폴더 밖에 지정합니다.",
+        help=(
+            "새로 만들 SQLite 파일 경로입니다. --interactive가 아니면 필수이며 "
+            "모든 스캔 폴더 밖에 지정합니다."
+        ),
     )
     parser.add_argument(
         "--hash-duplicates",
@@ -2324,8 +2351,26 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = build_argument_parser()
     args = parser.parse_args(argv)
     roots = [*args.roots, *args.extra_roots]
+    output = args.output
+    hash_duplicates = args.hash_duplicates
+
+    if args.interactive:
+        if roots or output is not None:
+            parser.error("--interactive는 스캔 경로나 --output과 함께 사용할 수 없습니다.")
+        try:
+            roots, output, prompted_hash_duplicates = _prompt_for_scan_arguments()
+        except KeyboardInterrupt:
+            print("\n[중단] 사용자가 입력을 중단했습니다.")
+            return 130
+        except EOFError:
+            print("\n[오류] 입력이 중간에 종료되었습니다.", file=sys.stderr)
+            return 2
+        hash_duplicates = hash_duplicates or prompted_hash_duplicates
+
     if not roots:
         parser.error("스캔 폴더를 하나 이상 지정하십시오.")
+    if not output:
+        parser.error("--output으로 결과 SQLite 파일 경로를 지정하십시오.")
 
     try:
         if args.max_hash_size_mb < 0:
@@ -2343,8 +2388,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         config = ScannerConfig(
             roots=tuple(Path(root) for root in roots),
-            output_db=Path(args.output),
-            hash_mode="duplicates" if args.hash_duplicates else "none",
+            output_db=Path(output),
+            hash_mode="duplicates" if hash_duplicates else "none",
             max_hash_size_bytes=(
                 0 if args.max_hash_size_mb == 0 else args.max_hash_size_mb * 1024**2
             ),
