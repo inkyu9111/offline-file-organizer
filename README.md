@@ -1,118 +1,191 @@
-# 오프라인 업무 파일 정리용 조회 스캐너
+# 오프라인 업무 파일 조회 스캐너
 
-`offline-file-organizer`는 인터넷이 차단된 업무용 컴퓨터에서 파일과 폴더의 현황을 안전하게 조사하는 도구입니다. 원본 파일을 이동하거나 삭제하지 않고 파일명, 상대경로, 확장자, 용량, 생성·수정 시각 등을 보고서로 정리합니다. 이 보고서를 외부 인공지능에 전달하거나 사람이 직접 검토해 폴더 정리 기준을 세울 수 있습니다.
+`offline-file-organizer`는 인터넷이 차단된 업무용 컴퓨터에서 여러 폴더의 파일 현황을 조사하는 도구입니다. 원본을 옮기거나 지우지 않으며, 조사 결과는 쉼표 구분 파일 여러 개가 아니라 **하나의 SQLite 데이터베이스**에 저장합니다.
 
-현재 저장소에는 **조회 전용 스캐너**만 들어 있습니다. 파일 이동, 이름 변경, 삭제 기능은 없습니다.
+스캔 중 발견한 파일과 오류는 바로 데이터베이스에 기록합니다. 작업이 오래 걸리거나 중간에 멈춘 경우에도 `scan_run` 표에서 마지막으로 처리하던 루트, 폴더, 작업 단계와 누적 건수를 확인할 수 있습니다.
 
-## 안전 원칙
+## 안전 범위
 
-- 스캔 대상의 파일과 폴더를 이동·삭제·이름 변경·내용 수정하지 않습니다.
-- 보고서 상위 폴더가 스캔 대상 안에 있으면 실행을 거부합니다.
-- 기본 모드는 파일 내용을 열지 않고 메타데이터만 조회합니다.
-- `--hash-duplicates`를 지정한 경우에만 같은 크기의 파일을 읽기 전용으로 열어 내용 지문을 계산합니다.
-- 파일형 클라우드 자리표시자와 재분석 지점은 목록에 남기되, 자동으로 내용을 읽지 않습니다.
+- 스캔 대상의 파일과 폴더를 이동·삭제·이름 변경·수정하지 않습니다.
+- 출력 데이터베이스가 스캔 대상 안에 있으면 실행을 거부합니다.
+- 서로 겹치는 스캔 폴더도 거부합니다. 상위 폴더와 그 하위 폴더를 함께 지정하면 같은 파일이 두 번 잡히기 때문입니다.
+- 기본 모드에서는 파일 내용을 열지 않고 이름, 상대경로, 확장자, 용량, 생성·수정 시각 같은 메타데이터만 읽습니다.
+- `--hash-duplicates`를 지정한 경우에만 같은 크기의 후보 파일을 읽기 전용으로 열어 SHA-256을 계산합니다.
 - 심볼릭 링크와 폴더형 재분석 지점은 따라가지 않습니다.
-- `cleanup_candidates.csv`는 검토 후보 목록입니다. 삭제 목록으로 사용하면 안 됩니다.
+- 정리 후보는 사람이 검토할 자료입니다. 프로그램은 삭제 대상을 만들거나 파일을 자동으로 정리하지 않습니다.
 
 ## 실행 환경
 
 - Windows 10 또는 Windows 11
 - Python 3.10 이상
-- 외부 Python 패키지 불필요
+- 별도 Python 패키지 불필요
 
-설치된 Python 버전은 다음 명령으로 확인합니다.
+Python 설치 여부는 다음 명령으로 확인합니다.
 
 ```bat
 py -3 --version
 ```
 
-`py` 명령을 찾지 못하면 다음 명령을 사용합니다.
+`py` 명령이 없다면 다음 명령도 확인하십시오.
 
 ```bat
 python --version
 ```
 
-## 저장소 받기
+## 여러 폴더를 한 번에 스캔하기
 
-인터넷에 연결된 컴퓨터에서는 다음 명령으로 저장소를 받을 수 있습니다.
+다음 예시는 `D:\업무자료1`과 `E:\업무자료2`를 함께 조사해 `F:\파일정리결과\scan.sqlite3` 하나에 저장합니다.
 
-```bash
-git clone https://github.com/inkyu9111/offline-file-organizer.git
+```bat
+py -3 readonly_file_scanner.py "D:\업무자료1" "E:\업무자료2" --output "F:\파일정리결과\scan.sqlite3"
 ```
 
-업무용 컴퓨터가 인터넷에 연결되지 않는다면 GitHub의 압축 파일을 내려받은 뒤, 회사에서 허용한 반입 절차에 따라 아래 파일을 업무용 컴퓨터로 옮깁니다.
+스캔 폴더는 세 개 이상도 같은 방식으로 이어서 적을 수 있습니다.
+
+```bat
+py -3 readonly_file_scanner.py ^
+  "D:\업무자료1" ^
+  "E:\업무자료2" ^
+  "F:\공용참고자료" ^
+  --output "G:\파일정리결과\scan.sqlite3"
+```
+
+폴더 하나만 지정하는 기존 방식도 지원합니다.
+
+```bat
+py -3 readonly_file_scanner.py "D:\업무자료1" --output "F:\파일정리결과\scan.sqlite3"
+```
+
+출력 파일이 이미 있으면 덮어쓰지 않고 종료합니다. 기존 결과를 보존한 채 새 파일명을 사용하십시오.
+
+## 배치파일로 실행하기
+
+`run_scanner.bat`와 `readonly_file_scanner.py`를 같은 폴더에 둔 뒤 배치파일을 실행합니다. 스캔할 폴더를 한 줄씩 입력하고, 입력이 끝나면 빈 줄에서 Enter를 누릅니다. 배치파일은 내부적으로 `--root` 옵션을 반복해서 전달합니다.
+
+명령행에서 같은 방식을 직접 사용할 수도 있습니다.
+
+```bat
+py -3 readonly_file_scanner.py ^
+  --root "D:\업무자료1" ^
+  --root "E:\업무자료2" ^
+  --output "F:\파일정리결과\scan.sqlite3"
+```
+
+## 진행 상태 확인
+
+실행 중에는 다음과 비슷한 문구가 갱신됩니다.
 
 ```text
-README.md
-readonly_file_scanner.py
-run_scanner.bat
-test_readonly_file_scanner.py
+[진행] 루트 1/2 ROOT-001 | 현재 폴더 사업/2026/보고서 | 완료 폴더 118/발견 243 | 파일 12,420개 | 8.31 GiB | 제외 9개 | 오류 2건 | 경과 00:04:18 | 폴더 항목 조회
 ```
 
-실행에는 `readonly_file_scanner.py`만 필요합니다. `run_scanner.bat`는 명령 입력을 돕고, `test_readonly_file_scanner.py`는 프로그램 점검에 사용합니다.
+표시되는 값은 다음 뜻입니다.
 
-## 가장 안전한 기본 실행
+- `현재 폴더`: 프로그램이 지금 `os.scandir()`로 읽는 폴더
+- `완료 폴더`: 항목 조회가 끝난 폴더 수
+- `발견`: 현재까지 찾은 전체 폴더 수이며, 아직 처리하지 않은 폴더도 포함
+- `파일`: 데이터베이스에 기록한 파일 수
+- `오류`: 접근 권한이나 파일 변경 등으로 기록된 오류 수
 
-명령 프롬프트나 PowerShell을 열고 프로그램이 있는 폴더로 이동합니다.
+전체 폴더 수는 스캔을 끝내기 전에는 알 수 없으므로 고정된 백분율은 표시하지 않습니다. 대신 완료·발견·대기 상태가 계속 갱신됩니다. 대형 폴더나 네트워크 경로에서 작업이 멈춘 것처럼 보여도 마지막 줄의 `현재 폴더`를 보면 어느 위치에서 기다리는지 알 수 있습니다.
+
+기본값은 1초 또는 파일 250개마다 화면을 갱신합니다.
 
 ```bat
-cd /d "D:\도구\offline-file-organizer"
+--progress-interval 1
+--progress-every 250
 ```
 
-아래 예시는 `D:\업무자료`를 조회하고, 스캔 대상 밖인 `D:\파일정리_스캔결과`에 보고서를 만듭니다.
+모든 변화를 출력하려면 다음과 같이 지정할 수 있습니다. 폴더와 파일이 많으면 화면 출력이 매우 길어집니다.
 
 ```bat
-py -3 readonly_file_scanner.py "D:\업무자료" --output "D:\파일정리_스캔결과"
+--progress-interval 0 --progress-every 1
 ```
 
-기본 실행에서는 파일 내용을 열지 않습니다. 실행할 때마다 보고서 상위 폴더 아래에 새 결과 폴더가 생깁니다.
+## 중간에 멈췄을 때 확인할 내용
 
-```text
-D:\파일정리_스캔결과\scan_20260824_143000
+데이터베이스의 `scan_run` 표에는 진행 상태가 계속 저장됩니다. SQLite 조회 프로그램이나 Python에서 다음 질의를 실행하십시오.
+
+```sql
+SELECT
+    status,
+    phase,
+    current_root_label,
+    current_folder,
+    current_operation,
+    last_heartbeat_at,
+    folders_discovered,
+    folders_completed,
+    files_scanned,
+    error_count,
+    failure_type,
+    failure_message
+FROM scan_run
+WHERE run_id = 1;
 ```
 
-다음 명령은 출력 폴더가 스캔 대상 안에 있으므로 거부됩니다.
+상태 값은 다음과 같습니다.
+
+| 상태 | 뜻 |
+|---|---|
+| `running` | 아직 실행 중이거나 강제 종료되어 정상 마감 기록을 남기지 못함 |
+| `completed` | 오류 없이 완료 |
+| `completed_with_errors` | 일부 항목에서 오류가 났지만 전체 절차는 완료 |
+| `interrupted` | Ctrl+C로 중단 |
+| `failed` | 예상하지 못한 예외로 중단 |
+
+세부 오류는 `scan_errors`, 폴더 시작·완료 이력은 `scan_events`에서 확인합니다. 예상하지 못한 예외가 발생하면 `failure_type`, `failure_message`, `failure_traceback`에도 원인이 남습니다.
+
+## 발견 즉시 저장하는 방식
+
+파일을 전부 메모리에 모은 뒤 한꺼번에 쓰지 않습니다.
+
+1. 출력 SQLite 파일과 표를 먼저 만듭니다.
+2. 폴더를 열기 직전에 `current_folder`를 기록하고 변경 내용을 확정합니다.
+3. 파일을 발견하면 `files`에 바로 추가합니다.
+4. 제외 항목과 오류도 각각 `excluded_paths`, `scan_errors`에 바로 추가합니다.
+5. 기본값으로 쓰기 100건마다 변경 내용을 확정하며, 진행 상태를 화면에 내보낼 때도 확정합니다.
+6. 전체 스캔이 끝난 뒤에는 데이터베이스 질의로 폴더 하위 집계와 중복 그룹만 계산합니다.
+7. 폴더 하위 집계처럼 SQLite가 만드는 임시 작업도 디스크를 사용합니다.
+
+더 자주 확정하려면 `--commit-every` 값을 줄입니다.
 
 ```bat
-py -3 readonly_file_scanner.py "D:\업무자료" --output "D:\업무자료\스캔결과"
+--commit-every 10
 ```
 
-## 배치파일로 실행
+한 건마다 확정하는 설정은 중단 시 손실 범위를 가장 작게 만들지만 느려질 수 있습니다.
 
-`run_scanner.bat`와 `readonly_file_scanner.py`를 같은 폴더에 둡니다. `run_scanner.bat`를 더블클릭한 뒤 아래 항목을 차례로 입력합니다.
+```bat
+--commit-every 1
+```
 
-1. 조회할 업무 폴더
-2. 보고서를 저장할 상위 폴더
-3. 같은 크기의 파일을 내용까지 비교할지 여부
-
-보고서 상위 폴더는 반드시 조회 대상 밖에 지정해야 합니다.
+정상 종료 후에는 `scan.sqlite3` 하나만 남습니다. 실행 중에는 SQLite가 복구용 `-journal` 파일을 잠시 만들 수 있으며, 비정상 종료 시 복구를 위해 남을 수도 있습니다. 이 경우 원본 데이터베이스와 함께 보관한 뒤 SQLite로 다시 열어 복구를 마치십시오.
 
 ## 실제 중복 파일 확인
 
-같은 크기의 파일 가운데 내용까지 같은 파일을 찾으려면 `--hash-duplicates`를 추가합니다.
+파일 크기만 같은 후보를 내용까지 비교하려면 `--hash-duplicates`를 추가합니다.
 
 ```bat
-py -3 readonly_file_scanner.py "D:\업무자료" ^
-  --output "D:\파일정리_스캔결과" ^
+py -3 readonly_file_scanner.py ^
+  "D:\업무자료1" "E:\업무자료2" ^
+  --output "F:\파일정리결과\scan.sqlite3" ^
   --hash-duplicates
 ```
 
-기본값으로 파일 한 개가 4 GiB를 넘으면 내용 지문을 계산하지 않습니다. 최대 크기를 1 GiB로 줄이려면 다음과 같이 실행합니다.
+기본값으로 파일 한 개가 4 GiB를 넘으면 해시하지 않습니다. 최대 크기를 1 GiB로 낮추려면 다음 옵션을 붙입니다.
 
 ```bat
-py -3 readonly_file_scanner.py "D:\업무자료" ^
-  --output "D:\파일정리_스캔결과" ^
-  --hash-duplicates ^
-  --max-hash-size-mb 1024
+--max-hash-size-mb 1024
 ```
 
-크기 제한을 없애려면 `0`을 지정합니다.
+제한을 없애려면 `0`을 지정합니다.
 
 ```bat
 --max-hash-size-mb 0
 ```
 
-내용 비교는 원본을 수정하지 않지만 파일을 끝까지 읽습니다. 대용량 파일이나 네트워크 드라이브를 대상으로 실행하면 시간이 오래 걸릴 수 있습니다. 처음에는 `--hash-duplicates` 없이 전체 현황부터 확인하는 편이 안전합니다.
+해시 모드는 파일을 수정하지 않지만 내용을 끝까지 읽습니다. 대용량 파일이나 네트워크 드라이브에서는 시간이 오래 걸릴 수 있습니다. 진행 문구의 `중복 확인 완료/전체` 수치로 처리 현황을 확인할 수 있습니다.
 
 ## 제외 규칙
 
@@ -124,16 +197,17 @@ py -3 readonly_file_scanner.py "D:\업무자료" ^
 $RECYCLE.BIN, System Volume Information
 ```
 
-사용자 제외 규칙은 `--exclude`를 여러 번 지정해 추가합니다.
+사용자 제외 규칙은 여러 번 지정할 수 있습니다.
 
 ```bat
-py -3 readonly_file_scanner.py "D:\업무자료" ^
-  --output "D:\파일정리_스캔결과" ^
+py -3 readonly_file_scanner.py ^
+  "D:\업무자료1" "E:\업무자료2" ^
+  --output "F:\파일정리결과\scan.sqlite3" ^
   --exclude "완료/**" ^
   --exclude "*.iso"
 ```
 
-기본 제외 폴더까지 모두 조회하려면 다음 옵션을 사용합니다.
+기본 제외 규칙을 해제하려면 다음 옵션을 사용합니다.
 
 ```bat
 --no-default-excludes
@@ -143,15 +217,18 @@ py -3 readonly_file_scanner.py "D:\업무자료" ^
 
 | 옵션 | 설명 |
 |---|---|
-| `--output PATH` | 보고서 상위 폴더를 지정합니다. 필수이며 스캔 대상 밖이어야 합니다. |
-| `--hash-duplicates` | 같은 크기의 파일을 내용 지문으로 한 번 더 비교합니다. |
-| `--max-hash-size-mb N` | 내용 지문을 계산할 파일 한 개의 최대 크기를 정합니다. 기본값은 4096 MiB이며 `0`은 무제한입니다. |
-| `--old-days N` | 오래된 파일 후보로 분류할 기준 일수를 정합니다. 기본값은 730일입니다. |
-| `--large-count N` | 대용량 파일 보고서에 넣을 상위 파일 수를 정합니다. 기본값은 100개입니다. |
-| `--exclude PATTERN` | 제외할 상대경로 무늬를 추가합니다. 여러 번 사용할 수 있습니다. |
-| `--no-default-excludes` | 기본 기술 폴더 제외 규칙을 해제합니다. |
-| `--progress-every N` | 파일 `N`개마다 진행 상황을 표시합니다. `0`이면 표시하지 않습니다. |
-| `--help` | 전체 도움말을 표시합니다. |
+| `--output FILE.sqlite3` | 새로 만들 결과 파일. 모든 스캔 폴더 밖에 지정해야 함 |
+| `--root PATH` | 스캔 폴더를 반복해서 추가. 배치파일에서 사용 |
+| `--hash-duplicates` | 같은 크기의 후보 파일을 SHA-256으로 확인 |
+| `--max-hash-size-mb N` | 해시할 파일 한 개의 최대 크기. 기본 4096 MiB, `0`은 무제한 |
+| `--old-days N` | 오래된 파일 후보 기준 일수. 기본 730일 |
+| `--large-count N` | `v_large_files`에 표시할 상위 파일 수. 기본 100개 |
+| `--exclude PATTERN` | 제외할 상대경로 무늬. 여러 번 사용 가능 |
+| `--no-default-excludes` | 기본 기술 폴더 제외 규칙 해제 |
+| `--progress-interval N` | 화면 진행 갱신 최대 간격. 기본 1초 |
+| `--progress-every N` | 파일 N개마다 진행 갱신. 기본 250개 |
+| `--commit-every N` | 쓰기 N건마다 데이터베이스 변경 확정. 기본 100건 |
+| `--help` | 전체 도움말 표시 |
 
 전체 도움말은 다음 명령으로 확인합니다.
 
@@ -159,65 +236,59 @@ py -3 readonly_file_scanner.py "D:\업무자료" ^
 py -3 readonly_file_scanner.py --help
 ```
 
-## 생성되는 보고서
+## SQLite 구성
 
-| 파일 | 내용 |
-|---|---|
-| `README_FIRST.txt` | 결과 확인 순서와 주의사항 |
-| `inventory_summary.txt` | 전체 파일 수, 총용량, 유형, 오류, 중복 요약 |
-| `folder_tree.txt` | 파일 식별자, 유형, 용량, 수정일을 포함한 계층형 구조 |
-| `file_manifest.csv` | 표 계산 프로그램과 인공지능 분석에 쓸 전체 파일 목록 |
-| `file_manifest.jsonl` | 원래 문자열을 보존한 기계 판독용 전체 목록 |
-| `folder_summary.csv` | 폴더별 직접·하위 파일 수와 용량 |
-| `empty_folders.csv` | 실제로 항목이 없는 빈 폴더 |
-| `large_files.csv` | 용량이 큰 상위 파일 |
-| `old_files.csv` | 기준 일수 이상 수정되지 않은 파일 |
-| `cleanup_candidates.csv` | 임시·백업·오래된 파일 등의 사람 검토 후보 |
-| `same_size_candidates.csv` | 크기가 같은 파일 후보 |
-| `confirmed_duplicates.csv` | 내용 지문까지 같은 파일 |
-| `excluded_paths.csv` | 규칙과 링크 처리 때문에 제외된 경로 |
-| `scan_errors.csv` | 권한 부족과 읽기 오류 등의 기록 |
-| `scan_metadata.json` | 실행 설정과 결과 건수 요약 |
-| `AI_ANALYSIS_PROMPT.txt` | 폴더 구조와 이동안을 인공지능에 요청할 때 쓸 지시문 |
+자주 확인할 표와 보기는 다음과 같습니다.
 
-쉼표 구분 파일은 한국어 Windows의 Excel에서 바로 열기 쉽도록 UTF-8 BOM으로 저장합니다. 파일명이 `=`, `+`, `-`, `@` 등으로 시작하면 수식으로 실행되지 않도록 표시값 앞에 작은따옴표를 붙입니다. 원래 파일명은 `file_manifest.jsonl`에 남습니다.
+| 이름 | 종류 | 내용 |
+|---|---|---|
+| `scan_run` | 표 | 전체 상태, 현재 폴더, 누적 건수, 실패 원인 |
+| `scan_roots` | 표 | 입력 루트별 상태와 집계 |
+| `folders` | 표 | 폴더별 직접·하위 집계와 처리 상태 |
+| `files` | 표 | 파일별 메타데이터와 해시 상태 |
+| `cleanup_candidates` | 표 | 사람이 확인할 정리 후보 |
+| `excluded_paths` | 표 | 제외한 경로와 사유 |
+| `scan_errors` | 표 | 접근·조회·해시 오류 |
+| `scan_events` | 표 | 폴더 시작·완료와 주요 단계 이력 |
+| `v_file_manifest` | 보기 | 루트 이름을 붙인 전체 파일 목록 |
+| `v_folder_summary` | 보기 | 루트 이름을 붙인 폴더 요약 |
+| `v_empty_folders` | 보기 | 실제 빈 폴더 |
+| `v_old_files` | 보기 | 설정 기준보다 오래된 파일 |
+| `v_large_files` | 보기 | 용량이 큰 상위 파일 |
+| `v_same_size_candidates` | 보기 | 크기가 같은 후보 |
+| `v_confirmed_duplicates` | 보기 | SHA-256까지 같은 파일 |
+| `embedded_documents` | 표 | 데이터베이스 안내문과 인공지능 분석 지시문 |
 
-## 인공지능에 전달할 자료
+예를 들어 전체 파일 목록은 다음 질의로 읽습니다.
 
-처음부터 전체 파일 목록을 넘기지 말고 다음 순서로 확인하는 편이 좋습니다.
+```sql
+SELECT *
+FROM v_file_manifest
+ORDER BY root_label, relative_path;
+```
 
-1. `inventory_summary.txt`
-2. `folder_tree.txt`
-3. `folder_summary.csv`
-4. 상세 분류가 필요할 때만 `file_manifest.csv`
-5. `AI_ANALYSIS_PROMPT.txt`
+마지막 오류 20건은 다음과 같이 확인합니다.
 
-보고서에는 파일 내용이 들어가지 않습니다. 다만 파일명과 폴더명만으로도 설비명, 사업명, 직원명, 계약 정보 같은 업무정보가 드러날 수 있습니다. 외부 인공지능에 입력하기 전에 회사의 정보 반출 규정과 허용 범위를 확인해야 합니다.
+```sql
+SELECT occurred_at, root_id, relative_path, operation, error_type, message
+FROM scan_errors
+ORDER BY error_id DESC
+LIMIT 20;
+```
+
+## 인공지능에 전달할 때
+
+`embedded_documents` 표의 `AI_ANALYSIS_PROMPT`와 필요한 보기를 함께 사용합니다. 처음에는 `scan_run`, `scan_roots`, `v_folder_summary`만 확인하고, 파일별 분류가 필요할 때 `v_file_manifest`를 읽는 편이 낫습니다.
+
+파일 내용은 데이터베이스에 들어가지 않습니다. 다만 파일명과 폴더명만으로도 설비명, 사업명, 직원명, 계약 정보가 드러날 수 있습니다. 외부 인공지능에 전달하기 전에 회사의 정보 반출 규정과 허용 범위를 확인하십시오.
 
 ## 테스트 실행
-
-저장소 폴더에서 다음 명령을 실행합니다.
 
 ```bat
 py -3 -m unittest -v test_readonly_file_scanner.py
 ```
 
-`py` 명령을 사용할 수 없는 환경에서는 다음과 같이 실행합니다.
-
-```bat
-python -m unittest -v test_readonly_file_scanner.py
-```
-
-테스트는 원본 비변경, 출력 경로 차단, 기본 제외 규칙, 선택적 중복 확인, 보고서 생성, 쉼표 구분 파일 안전 처리 등을 점검합니다.
-
-## 결과 해석 시 주의할 점
-
-- `size_bytes`는 논리적 파일 크기입니다. 압축 파일과 희소 파일이 실제 디스크에서 차지하는 용량과 다를 수 있습니다.
-- Linux와 macOS에서는 파일시스템이 생성 시각을 제공하지 않을 수 있습니다. 이 경우 `created_time_source`에 메타데이터 변경 시각이 표시됩니다.
-- `same_size_candidates.csv`에 함께 나온 파일은 크기만 같을 수 있습니다. 실제 중복 여부는 내용 지문 확인이 필요합니다.
-- 내용 지문이 같아도 어느 파일을 남길지, 다른 문서가 기존 경로를 참조하는지는 사람이 판단해야 합니다.
-- Excel 외부 링크, 바로가기, 배치파일, 프로그램 설정파일의 경로 의존성은 이 조회 단계에서 바꾸지 않습니다.
-- 네트워크 공유 폴더를 조회할 때는 다른 사용자의 작업과 접근 권한을 고려해야 합니다.
+테스트는 다중 루트, 출력 경로 차단, 발견 즉시 기록, 진행 상태 저장, 중단 원인 기록, 폴더 하위 집계, 중복 해시, 한글 역할 주석을 점검합니다.
 
 ## 저장소 구성
 
